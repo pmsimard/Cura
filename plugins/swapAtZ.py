@@ -10,86 +10,298 @@
 ##Writen by Pierre-Marc Simard, pierrem.simard@gmail.com
 
 
-import re
-import os
+import os, sys, math, re
 
-def getValue(line, key, default = None):
-	if not key in line or (';' in line and line.find(key) > line.find(';')):
-		return default
-	subPart = line[line.find(key) + 1:]
-	m = re.search('^[0-9]+\.?[0-9]*', subPart)
-	if m is None:
-		return default
-	try:
-		return float(m.group(0))
-	except:
-		return default
+class gcodeLayerDescriptor():
+        RequestedZ = 0.0
+        LayerZ = 0.0
+        LayerLineIndex = -1
+        G0LineIndex = -1
+        LayerHeight = 0.0
+        LastG1Line = None
+        IsFirstLayer = False
 
 
-def searchForZ(lines, z0, z1):
+#same code as the one in tweak at z plugin. 
+def GetValue(line, key, default = None):
+        '''
+        Find the requested value of key in line or return default value
+        '''
+        if not key in line or (';' in line and line.find(key) > line.find(';')):
+                return default
 
-        zState = 0
-        z0Index = 0
-        z1Index = -1
+        subPart = line[line.find(key) + 1:]
+        m = re.search('^[0-9]+\.?[0-9]*', subPart)
+        if m is None:
+                return default
+        try:
+                return float(m.group(0))
+        except:
+                return default
 
+
+def SearchForLayerAtZ(requestedZ, lines):
+        '''
+        Search for the first layer at the requestedZ. 
+        return gcodeLayerDescriptor
+        '''
+
+        desc = gcodeLayerDescriptor()
+        desc.RequestedZ = requestedZ
+                
         z = 0.0
         lineIndex = 0
-        for line in lines:
-                if line.startswith('G0') and lines[lineIndex-1].startswith(';LAYER:'):
-                        z = getValue(line, "Z", z);
-                        if zState == 0 and z >= z0:
-                                zState = 1
-                                z0Index = lineIndex
-                                if z1 <= 0.0:
-                                        break
+        previousLayerZ = 0.0
+        lineCount = len(lines)
+        lineIndex = 0
+        while lineIndex < lineCount:
+                if lines[lineIndex].startswith(';LAYER:'):
+                        layerLineIndex = lineIndex
+                        lineIndex +=1
+                        while lineIndex < lineCount:
+                                line = lines[lineIndex]
+                                if line.startswith('G0'):
+                                        z = GetValue(line, "Z", z);
+                                        if z >= requestedZ:
+                                                desc.LayerZ = z
+                                                desc.LayerLineIndex = layerLineIndex
+                                                desc.G0LineIndex = lineIndex
+                                                desc.LayerHeight = z - previousLayerZ
+                                                desc.LastG1Line = SearchForLastG1Line(lines, desc.LayerLineIndex)
+                                                desc.IsFirstLayer = previousLayerZ == 0.0
+                                                return desc
 
-                        elif zState == 1 and z >= z1:
-                                z1Index = lineIndex
-                                break
-                                
+                                        previousLayerZ = z
+                                        break
+                                lineIndex +=1
 
                 lineIndex += 1
 
-        return (z0Index, z1Index)
+        return None
+        
 
-def searchForLastG1Line(lines, lineIndex=-1):
+def CompensateEForLayerHeight(previousLayerZ, desc, lines):
+        desiredLayerHeight = desc.LayerZ - previousLayerZ
+        if desiredLayerHeight != desc.LayerHeight:
+                scaleFactor = desiredLayerHeight / desc.LayerHeight
+                
+                print 'SwapAtZ log: - Swapped layer require height compensation. previousZ:', previousLayerZ, 'newZ', desc.LayerZ, 'current layer height:', desc.LayerHeight, 'E delta scale factor:', scaleFactor
 
-        if lineIndex == -1:
+                lastEValue = -1
+                lastModifiedEValue = -1
+                ModificationStep = 0
+                ConstantDelta = 0.0
+                if desc.LastG1Line:
+                        lastEValue = GetValue(desc.LastG1Line, "E", -1)
+                        lastModifiedEValue = lastEValue
+
+                encounteredLayerCount = 0
+                lineCount = len(lines)
+                for x in xrange(lineCount):
+                        line = lines[x]
+                        if line.startswith("G1 "):
+                                eValue = GetValue(line, "E", -1)
+                                if eValue != -1:
+                                        if ModificationStep == 0 :
+                                                if lastEValue == -1:
+                                                        lastEValue = eValue
+                                                        lastModifiedEValue = eValue
+                                                        continue
+
+                                                delta = eValue - lastEValue
+                                                lastModifiedEValue = lastModifiedEValue + (delta * scaleFactor)
+                                                lastEValue = eValue #we need the lastEValue not modified otherwise we will affect the scaling.
+                                                lines[x] = "%sE%0.5f\n" % (line[:line.rfind("E")], lastModifiedEValue)
+                                        else:
+                                                lines[x] = "%sE%0.5f\n" % (line[:line.rfind("E")], eValue+ConstantDelta)
+
+
+
+                        if ModificationStep == 0 and line.startswith(';LAYER:'):
+                                encounteredLayerCount += 1
+                                if encounteredLayerCount > 1: #stop scaling and offset E
+                                        ModificationStep = 1
+                                        ConstantDelta = lastModifiedEValue - lastEValue
+
+
+                        
+def ResetE(value, desc, lines):
+        '''
+        For every G1 line with an E value found in list
+        offset the E value based on the delta between provided value and the first E value found.
+        '''
+        if value == -1:
+                return False
+
+        firstE = -1
+        delta = -1
+        
+        if desc.LastG1Line:
+                firstE = GetValue(desc.LastG1Line, "E", -1)
+
+        if firstE != -1:
+                delta = firstE - value
+
+        lineCount = len(lines)
+        for x in xrange(lineCount):
+                line = lines[x]
+                if line.startswith("G1 "):
+                        eValue = GetValue(line, "E", -1)
+                        if eValue != -1:
+                                curE = eValue
+
+                                if firstE == -1:
+                                        firstE = curE
+                                        delta = firstE - value
+                                        curE = value
+
+                                else:
+                                        curE -= delta
+
+                                lines[x] = "%sE%0.5f\n" % (line[:line.rfind("E")], curE)
+
+        print 'SwapAtZ log: - Reset E using delta value:', delta
+        return True
+
+
+def SearchForLastG1Line(lines, lineIndex=-1):
+        '''
+        Start from provided index or end of list and move upward until a G1 command containing an E value is found.
+        '''
+        if lineIndex == -1 or lineIndex >= len(lines) :
                 lineIndex = len(lines)-1
                 
         while lineIndex >= 0:
-                if lines[lineIndex].startswith("G1 ") and getValue(lines[lineIndex], "E", -1) != -1:
+                if lines[lineIndex].startswith("G1 ") and 'E' in lines[lineIndex]:
                         return lines[lineIndex]
                 
                 lineIndex -= 1
 
         return None
                 
-def ResetE(lines, value):
-        if value == -1:
-                return
 
-        firstE = -1
-        delta = -1
-        
+def SplitInSubObjects(lines):
+        '''
+        split the content of a gcode file into sub objects.
+        This allow support for print one at the time option
+        '''
+
         lineCount = len(lines)
-        for x in xrange(lineCount):
-                line = lines[x]
-                if line.startswith("G1 ") and getValue(line, "E", -1) != -1:
-                        curE = getValue(line, "E", -1)
+        lineIndex = 0
+        subObjects = []
+        subObjectStart = 0
+        for lineIndex in xrange(lineCount):
+                if ';Layer count:' in lines[lineIndex]:
+                        if subObjectStart != 0:
+                                if len(subObjects) == 0:
+                                        subObjects.append( lines[:lineIndex-1])
+                                else:
+                                        subObjects.append( lines[subObjectStart:lineIndex-1])
 
-                        if firstE == -1:
-                                firstE = curE
-                                delta = firstE - value
-                                curE = value
+                        subObjectStart = lineIndex
 
-                        else:
-                                curE -= delta
+        if subObjectStart != 0:
+                if len(subObjects) == 0:
+                        subObjects.append( lines )
+                else:
+                        subObjects.append( lines[subObjectStart:])
 
-                        lines[x] = "%sE%0.5f\n" % (lines[x][:lines[x].rfind("E")], curE)
+        return subObjects
+
+
+def SwapContentAtZ(z, currentLines, swapLines, useRetraction=False):
+        '''
+        Swap content from currentLines with swapLines at given Z and output result of into currentLines
+        '''
+
+        #get the descriptor for the given layer. None if not found.
+        currentLayerDesc = SearchForLayerAtZ(z, currentLines)
+        swapTargetDesc = None
+
+        if currentLayerDesc:
+                #same but for the swap data but
+                #this time we want the layer that come at the same height as the current data
+                #because the layer height of current could be bigger than the one of swap data and
+                #we dont want to crash layers together. 
+                #ex: requested Z = 0.5mm, current data found 0.6mm (layer height 0.2mm) but swap data found 0.5mm (layer height 0.1mm)
+
+                swapTargetDesc = SearchForLayerAtZ(currentLayerDesc.LayerZ, swapLines)
+
+        if currentLayerDesc is None or swapTargetDesc is None:
+                print 'SwapAtZ log: Cannot swap content for requested z', z, '.CurrentLayer is None:', currentLayerDesc is None, 'SwapTarget is None:', swapTargetDesc is None
+                return False
+
+        print 'SwapAtZ log: Swapping content at z', z, 'Layer line index current:', currentLayerDesc.LayerLineIndex, 'swat target:', swapTargetDesc.LayerLineIndex
                 
 
+        #If the swap starts somewhere after the first layer we need to perform the following:
+        #1. Locate the last G1 line. Currently its always the line before ;LAYER:##.
+        #2. Add a G10/G11 (retraction) if needed. distance is bigger than default min retraction (1.5mm) and retraction is present used in print (we dont want to add retraction where there is none desired)
+        #3. Compensate the E value for the difference in layer height. If previous layer Z != swap layer Z - swap layer height we need to compensate E.
+        #4. Compensate the E value. The issue here is that the new data block contain its own E value based on the amount of filament it extruded already.
+        #       Making a swap means we need to tell it where the current file is at in E value.
+
+        del currentLines[currentLayerDesc.LayerLineIndex:]
+
+        swapDataBlock = swapLines[swapTargetDesc.LayerLineIndex:]
+        if not currentLayerDesc.IsFirstLayer:
+                #step 1. Find the end of the previous layer in the swap content. We need to travel there.
+                FirstG1LineIndex = -1
+                FirstG1EValue = -1
+                for lineIndex in xrange(len(swapDataBlock)):
+                        if swapDataBlock[lineIndex].startswith('G1 ') and 'E' in swapDataBlock[lineIndex]:
+                                FirstG1EValue = GetValue(swapDataBlock[lineIndex], 'E', -1)
+                                FirstG1LineIndex = lineIndex
+                                break
+
+
+                if currentLayerDesc.LastG1Line and useRetraction and FirstG1LineIndex != -1:
+
+                        #step 2. Retraction codes
+                        xG1 = GetValue(currentLayerDesc.LastG1Line, 'X', None)
+                        yG1 = GetValue(currentLayerDesc.LastG1Line, 'Y', None)
+                        xG0 = GetValue(swapLines[swapTargetDesc.G0LineIndex], 'X', None)
+                        yG0 = GetValue(swapLines[swapTargetDesc.G0LineIndex], 'Y', None)
+
+                        if xG1 and yG1 and xG0 and yG0:
+                                x = xG1 - xG0
+                                y = yG1 - yG0
+                                dist = math.sqrt(x*x + y*y)
+                                if dist > 1.5: #default retraction distance
+                                        print 'SwapAtZ log: - Adding retraction between layers. Distance', dist, ' > 1.5mm'
+
+                                        swapDataBlock.insert(FirstG1LineIndex, 'G11\n')
+                                        swapDataBlock.insert(0, 'G10\n')
+                                        FirstG1LineIndex += 2
+                                        
+                                        
+                #step 3. Check layer height
+                CompensateEForLayerHeight(currentLayerDesc.LayerZ - currentLayerDesc.LayerHeight, swapTargetDesc, swapDataBlock)
+
+                #step 4. Get current E value
+                CurrentG1Line = SearchForLastG1Line(currentLines)
+                if CurrentG1Line:
+                        #make the E value of the swap content match the one of the current data
+                        if not ResetE(GetValue(CurrentG1Line, "E", -1), swapTargetDesc, swapDataBlock) and FirstG1EValue != -1:
+                                print 'SwapAtZ log: - Could not reset E in swapped content. Inserting G92 E value:', FirstG1EValue
+                                swapDataBlock.insert(FirstG1LineIndex, ('G92 E%0.5f' % FirstG1EValue))
+
+                elif FirstG1EValue != -1:
+                        print 'SwapAtZ log: - Could not reset E in swapped content. Inserting G92 E value:', FirstG1EValue
+                        swapDataBlock.insert(FirstG1LineIndex, ('G92 E%0.5f' % FirstG1EValue))
+
+        #add the swap content
+        currentLines.append(';SwapAtZ Start for requested Z%s\n' % z)
+        currentLines += swapDataBlock
+
+        return True
+
+
+print 'SwapAtZ log: ==========================================='
+                        
 if os.path.exists(swapFilename):
+
+        print 'SwapAtZ log: Target file exist.'
 
         #get the current content
         with open(filename, "r") as f:
@@ -98,107 +310,96 @@ if os.path.exists(swapFilename):
         #get the content that we want to swap in
         with open(swapFilename, "r") as f:
                 swapLines = f.readlines()
-                
-        #find where the swap start and end in the current data. -1 means end of file
-        swapStart, swapEnd = searchForZ(currentLines, swapStartH, swapEndH)
 
-        #same but for the swap data
-        swapTargetStart, swapTargetEnd = searchForZ(swapLines, swapStartH, swapEndH)
-
-        with open("swapAtZ.log", "w") as logf:
-                logf.write(filename + "->" + swapFilename + "\n")
-                logf.write("Code Chunks:%i, %i, %i, %i\n" % (swapStart, swapEnd, swapTargetStart, swapTargetEnd))
-
-        #this is the resulting gcode file containing the swap of content.
-        lines = []
-
-        #start. Take the begining of the file and keep it.
-        if swapStart > 0:
-                lines = currentLines[0:swapStart-1]
-
-        #swap section. Get the section from swaplines that needs to be put in. From swat target start to the target end.
-        swapLinesSet = swapLines[swapTargetStart-1:] if swapTargetEnd == -1 else swapLines[swapTargetStart-1:swapTargetEnd-1]
-
-        #If the swap starts somewhere after the first layer we need to perform the following:
-        #1. Locate the last G1 line. Currently its always the line before ;LAYER:##.
-        #2. Add a G0 code to navigate the same point as that G1 at a given speed. Speed should be TravelSpeed. For now its print speed.
-        #3. Compensate the E value. The issue here is that the swapLineSet contain its own E value based on the amount of filament it extruded already.
-        #       Making a swap means we need to tell it where the current file is at.
-        if swapStartH != 0:
-                #step 1. Find the end of the previous layer in the swap content. We need to travel there.
-                G1Line = searchForLastG1Line(swapLines, swapTargetStart-1)
-                if G1Line:
-                        #step 2. Travel to that location
-                        lines.append("G0 F%i X%0.2f Y%0.2f\n" % (getValue(G1Line, "F", 3000), getValue(G1Line, "X", 100.0), getValue(G1Line, "Y", 100.0)))
-                else:
-                        raise Exception("Cannot find any G1 line in swapLines starting at " + str(swapTargetStart) + ". Find something for this case")
-                
-                #step 3. Get current E value
-                CurrentG1Line = searchForLastG1Line(lines)
-                if CurrentG1Line:
-                        #make the E value of the swap content match the one of the current data
-                        ResetE(swapLinesSet, getValue(CurrentG1Line, "E", -1))
-
-                else:
-                        raise Exception("Cannot compensate the E value of the swaped content. GCode will not be valid")
-
-        #add the swap content
-        lines += swapLinesSet
-        
-        #If the swap did not cover the remaining of the file. We need to do the same 3 steps as above.
-        if swapEnd != -1:
-                currentLineSet = currentLines[swapEnd-1:]
-
-                #step 1. Find the end of the previous layer in the current content. We need to travel there.
-                G1Line = searchForLastG1Line(currentLines, swapEnd-1)
-                if G1Line:
-                        #step 2. Travel to that location
-                        lines.append("G0 F%i X%0.2f Y%0.2f\n" % (getValue(G1Line, "F", 3000), getValue(G1Line, "X", 100.0), getValue(G1Line, "Y", 100.0)))
-                else:
-                        raise Exception("Cannot find any G1 line in currentLines starting at " + str(swapTargetStart) + ". Find something for this case")
-
-
-                #step 3. Get current E value
-                CurrentG1Line = searchForLastG1Line(lines)
-                if CurrentG1Line:
-                        #make the E value of the swap content match the one of the current data
-                        ResetE(currentLineSet, getValue(CurrentG1Line, "E", -1))
-                        
-                lines += currentLineSet
-
-        lastEValue = -1
-        layerIndex = 0
-        lineCount = len(lines)
-
-        #reset layer numbers
-        for x in xrange(lineCount):
-                
-                if lines[x].startswith(";LAYER:"):
-                        lines[x] = ";LAYER:" + str(layerIndex) + "\n"
-                        layerIndex += 1
-
-        #get last E value and 
-        x = lineCount-1
-        while x >= 0:
-                if lines[x].startswith("G1 ") and getValue(lines[x], "E", -1) != -1:
-                        lastEValue = getValue(lines[x], "E", -1)
-                        break
-
-                x -= 1
-
-        #set the layer count
-        for x in xrange(lineCount):
-                if lines[x].startswith(";Layer count:"):
-                        lines[x] = ";Layer count: " + str(layerIndex + 1) + "\n"
+        #define if we use retraction in this gcode or not.
+        useRetraction = False
+        for l in currentLines:
+                if "G11" in l: #end retraction (G10 is start retraction and occur at the end of the print)
+                        useRetraction = True
                         break
                         
-        #set the material count
-        if lastEValue != -1:
-                for x in xrange(lineCount):
-                        if lines[x].startswith(";MATERIAL:"):
-                                lines[x] = ";MATERIAL: " + str(int(lastEValue)) + "\n"
+        if not useRetraction:
+                for l in swapLines:
+                        if "G11" in l: #end retraction (G10 is start retraction and occur at the end of the print)
+                                useRetraction = True
                                 break
 
-        with open(filename, "w") as f:
-                for line in lines:
-                        f.write(line)
+
+        #split the content in sub objects. Allow support for print one at a time mode and ease the swapping process.
+        currentLinesSubObjects = SplitInSubObjects(currentLines)
+        swapLinesSubObjects = SplitInSubObjects(swapLines)
+                
+        print 'SwapAtZ log: SubObjectSplits current:', len(currentLinesSubObjects), 'target:',len(swapLinesSubObjects)
+
+        #make sure they constain the same number of objects
+        if len(currentLinesSubObjects) == len(swapLinesSubObjects):
+
+                lines = []
+                totalEValue = 0
+
+                for subObjectIndex in xrange(len(currentLinesSubObjects)):
+                        subObjectLines = currentLinesSubObjects[subObjectIndex][:]
+
+                        print 'SwapAtZ log: Checking sub object', subObjectIndex
+
+                        #swap the content from the current with the desired gcode content until the end of the subobject.
+                        if SwapContentAtZ(swapStartH, subObjectLines, swapLinesSubObjects[subObjectIndex], useRetraction):
+
+                                #if the swap end before the end.
+                                if swapEndH > swapStartH:
+                                        #swap content back to current gcode content.
+                                        SwapContentAtZ(swapEndH, subObjectLines, currentLinesSubObjects[subObjectIndex], useRetraction)
+
+        
+                        layerIndex = 0
+                        lineCount = len(subObjectLines)
+
+                        #reset layer numbers
+                        for x in xrange(lineCount):
+                
+                                if subObjectLines[x].startswith(";LAYER:"):
+                                        subObjectLines[x] = ";LAYER: %i\n" % layerIndex
+                                        layerIndex += 1
+
+                        #get last E value and add it to the total for material count
+                        x = lineCount-1
+                        while x >= 0:
+                                if subObjectLines[x].startswith("G1 ") and 'E' in subObjectLines[x]:
+                                        totalEValue += GetValue(subObjectLines[x], "E", -1)
+                                        break
+
+                                x -= 1
+
+
+                        #set the layer count
+                        for x in xrange(lineCount):
+                                if subObjectLines[x].startswith(";Layer count:"):
+                                        subObjectLines[x] = ";Layer count: %i\n" % (layerIndex + 1)
+                                        break
+                        
+                        print 'SwapAtZ log: - new layer count', layerIndex + 1
+                
+                        lines += subObjectLines
+
+                #set the material count
+                if totalEValue > 0:
+                        print 'SwapAtZ log: new Material value', totalEValue
+                        for x in xrange(lineCount):
+                                if lines[x].startswith(";MATERIAL:"):
+                                        lines[x] = ";MATERIAL: %i\n" % totalEValue
+                                        break
+
+                #write the result back
+                with open(filename, "w") as f:
+                        for line in lines:
+                                f.write(line)
+
+        else:
+                print 'SwapAtZ log: Cannot perform swap when not the same number of objects are printed one at a time'
+
+
+else:
+        print 'SwapAtZ log: Target file does not exist.'
+
+
+print 'SwapAtZ log: ==========================================='
