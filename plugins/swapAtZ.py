@@ -8,7 +8,7 @@
 
 ##The goal of this plugin is to allow user to swap portions of previously saved gcode and generate a new one from it. 
 ##Writen by Pierre-Marc Simard, pierrem.simard@gmail.com
-
+##Dirkels: Adding better support for height change. Fixing swap height to locate best matching layer
 
 import os, sys, math, re
 
@@ -40,37 +40,54 @@ def GetValue(line, key, default = None):
                 return default
 
 
-def SearchForLayerAtZ(requestedZ, lines):
+def SearchForLayerAtZ(requestedZ, lines, swap):
         '''
         Search for the first layer at the requestedZ. 
         return gcodeLayerDescriptor
         '''
 
+        print 'SwapAtZ log: SearchForLayerAtZ(', requestedZ, ', lines)'
         desc = gcodeLayerDescriptor()
         desc.RequestedZ = requestedZ
                 
         z = 0.0
         lineIndex = 0
+        prePreviousLayerZ = 0.0
         previousLayerZ = 0.0
+        layerLineIndex = 0
         lineCount = len(lines)
         lineIndex = 0
         while lineIndex < lineCount:
                 if lines[lineIndex].startswith(';LAYER:'):
+                        previousLayerLineIndex = layerLineIndex
                         layerLineIndex = lineIndex
                         lineIndex +=1
                         while lineIndex < lineCount:
                                 line = lines[lineIndex]
                                 if line.startswith('G0'):
                                         z = GetValue(line, "Z", z);
-                                        if z >= requestedZ:
-                                                desc.LayerZ = z
-                                                desc.LayerLineIndex = layerLineIndex
-                                                desc.G0LineIndex = lineIndex
-                                                desc.LayerHeight = z - previousLayerZ
-                                                desc.LastG1Line = SearchForLastG1Line(lines, desc.LayerLineIndex)
-                                                desc.IsFirstLayer = previousLayerZ == 0.0
-                                                return desc
+                                        if swap:
+                                                if previousLayerZ > requestedZ:
+                                                        print 'SwapAtZ log: SearchForLayerAtZ: found at ', previousLayerZ
+                                                        desc.LayerZ = previousLayerZ
+                                                        desc.LayerLineIndex = previousLayerLineIndex
+                                                        desc.G0LineIndex = lineIndex
+                                                        desc.LayerHeight = previousLayerZ - prePreviousLayerZ
+                                                        desc.LastG1Line = SearchForLastG1Line(lines, desc.LayerLineIndex)
+                                                        desc.IsFirstLayer = previousLayerZ == 0.0
+                                                        return desc
+                                        else:
+                                                if z > requestedZ:
+                                                        print 'SwapAtZ log: SearchForLayerAtZ: found at ', previousLayerZ
+                                                        desc.LayerZ = previousLayerZ
+                                                        desc.LayerLineIndex = layerLineIndex
+                                                        desc.G0LineIndex = lineIndex
+                                                        desc.LayerHeight = previousLayerZ - prePreviousLayerZ
+                                                        desc.LastG1Line = SearchForLastG1Line(lines, desc.LayerLineIndex)
+                                                        desc.IsFirstLayer = previousLayerZ == 0.0
+                                                        return desc
 
+                                        prePreviousLayerZ = previousLayerZ
                                         previousLayerZ = z
                                         break
                                 lineIndex +=1
@@ -82,7 +99,7 @@ def SearchForLayerAtZ(requestedZ, lines):
 
 def CompensateEForLayerHeight(previousLayerZ, desc, lines):
         desiredLayerHeight = desc.LayerZ - previousLayerZ
-        if desiredLayerHeight != desc.LayerHeight:
+        if abs(desiredLayerHeight - desc.LayerHeight) > 0.001:
                 scaleFactor = desiredLayerHeight / desc.LayerHeight
                 
                 print 'SwapAtZ log: - Swapped layer require height compensation. previousZ:', previousLayerZ, 'newZ', desc.LayerZ, 'current layer height:', desc.LayerHeight, 'E delta scale factor:', scaleFactor
@@ -215,7 +232,7 @@ def SwapContentAtZ(z, currentLines, swapLines, useRetraction=False):
         '''
 
         #get the descriptor for the given layer. None if not found.
-        currentLayerDesc = SearchForLayerAtZ(z, currentLines)
+        currentLayerDesc = SearchForLayerAtZ(z, currentLines, False)
         swapTargetDesc = None
 
         if currentLayerDesc:
@@ -225,13 +242,13 @@ def SwapContentAtZ(z, currentLines, swapLines, useRetraction=False):
                 #we dont want to crash layers together. 
                 #ex: requested Z = 0.5mm, current data found 0.6mm (layer height 0.2mm) but swap data found 0.5mm (layer height 0.1mm)
 
-                swapTargetDesc = SearchForLayerAtZ(currentLayerDesc.LayerZ, swapLines)
+                swapTargetDesc = SearchForLayerAtZ(currentLayerDesc.LayerZ, swapLines, True)
 
         if currentLayerDesc is None or swapTargetDesc is None:
                 print 'SwapAtZ log: Cannot swap content for requested z', z, '.CurrentLayer is None:', currentLayerDesc is None, 'SwapTarget is None:', swapTargetDesc is None
                 return False
 
-        print 'SwapAtZ log: Swapping content at z', z, 'Layer line index current:', currentLayerDesc.LayerLineIndex, 'swat target:', swapTargetDesc.LayerLineIndex
+        print 'SwapAtZ log: Swapping content at z', z, 'Layer line index current:', currentLayerDesc.LayerLineIndex, 'swap target:', swapTargetDesc.LayerLineIndex
                 
 
         #If the swap starts somewhere after the first layer we need to perform the following:
@@ -276,7 +293,7 @@ def SwapContentAtZ(z, currentLines, swapLines, useRetraction=False):
                                         
                                         
                 #step 3. Check layer height
-                CompensateEForLayerHeight(currentLayerDesc.LayerZ - currentLayerDesc.LayerHeight, swapTargetDesc, swapDataBlock)
+                CompensateEForLayerHeight(currentLayerDesc.LayerZ, swapTargetDesc, swapDataBlock)
 
                 #step 4. Get current E value
                 CurrentG1Line = SearchForLastG1Line(currentLines)
