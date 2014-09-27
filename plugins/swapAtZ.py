@@ -7,8 +7,9 @@
 #Param: swapEndH(float:-1.0) Swap end height (mm) (optional)
 
 ##The goal of this plugin is to allow user to swap portions of previously saved gcode and generate a new one from it. 
-##Writen by Pierre-Marc Simard, pierrem.simard@gmail.com
-##Dirkels: Adding better support for height change. Fixing swap height to locate best matching layer
+##09/09/2014: Started by Pierre-Marc Simard, pierrem.simard@gmail.com
+##09/25/2014: Dirkels: Adding better support for height change. Fixing swap height to locate best matching layer
+##09/27/2014: PM: Replaced process of offsetting E value at large in the gcode and added G92 codes instead. This prevent potential max float issues and simplify code. Proposed by GR5
 
 import os, sys, math, re
 
@@ -116,69 +117,60 @@ def CompensateEForLayerHeight(previousLayerZ, desc, lines):
                 lineCount = len(lines)
                 for x in xrange(lineCount):
                         line = lines[x]
+                        if line.startswith("G92 ") and "E" in line:
+                                if lastEValue != -1:
+                                        lastEValue = GetValue(line, "E", -1)
+                                        lastModifiedEValue = lastEValue
+                                        continue
+
+
                         if line.startswith("G1 "):
                                 eValue = GetValue(line, "E", -1)
                                 if eValue != -1:
-                                        if ModificationStep == 0 :
-                                                if lastEValue == -1:
-                                                        lastEValue = eValue
-                                                        lastModifiedEValue = eValue
-                                                        continue
+                                        if lastEValue == -1:
+                                                lastEValue = eValue
+                                                lastModifiedEValue = eValue
+                                                continue
 
-                                                delta = eValue - lastEValue
-                                                lastModifiedEValue = lastModifiedEValue + (delta * scaleFactor)
-                                                lastEValue = eValue #we need the lastEValue not modified otherwise we will affect the scaling.
-                                                lines[x] = "%sE%0.5f\n" % (line[:line.rfind("E")], lastModifiedEValue)
-                                        else:
-                                                lines[x] = "%sE%0.5f\n" % (line[:line.rfind("E")], eValue+ConstantDelta)
+                                        delta = eValue - lastEValue
+                                        lastModifiedEValue = lastModifiedEValue + (delta * scaleFactor)
+                                        lastEValue = eValue #we need the lastEValue not modified otherwise we will affect the scaling.
+                                        lines[x] = "%sE%0.5f\n" % (line[:line.rfind("E")], lastModifiedEValue)
 
 
 
-                        if ModificationStep == 0 and line.startswith(';LAYER:'):
+                        if line.startswith(';LAYER:'):
                                 encounteredLayerCount += 1
                                 if encounteredLayerCount > 1: #stop scaling and offset E
-                                        ModificationStep = 1
-                                        ConstantDelta = lastModifiedEValue - lastEValue
-
+                                        lines.insert(x, ("G92 E%0.5f\n" % lastEValue))
+                                        break
+                                        
 
                         
-def ResetE(value, desc, lines):
+def ResetE(desc, lines):
         '''
-        For every G1 line with an E value found in list
-        offset the E value based on the delta between provided value and the first E value found.
+        Add a G92 code to set an offset in the E value for the upcoming layers.
+        This remove the need to reset the E values everywhere and avoid potential issues with max float.
         '''
-        if value == -1:
-                return False
-
         firstE = -1
-        delta = -1
         
         if desc.LastG1Line:
                 firstE = GetValue(desc.LastG1Line, "E", -1)
 
-        if firstE != -1:
-                delta = firstE - value
-
         lineCount = len(lines)
         for x in xrange(lineCount):
                 line = lines[x]
+                if line.startswith("G92 ") and "E" in line:
+                        break
+
                 if line.startswith("G1 "):
                         eValue = GetValue(line, "E", -1)
                         if eValue != -1:
-                                curE = eValue
-
                                 if firstE == -1:
-                                        firstE = curE
-                                        delta = firstE - value
-                                        curE = value
+                                        firstE = eValue
 
-                                else:
-                                        curE -= delta
-
-                                lines[x] = "%sE%0.5f\n" % (line[:line.rfind("E")], curE)
-
-        print 'SwapAtZ log: - Reset E using delta value:', delta
-        return True
+                                lines.insert(x, ("G92 E%0.5f\n" % firstE))
+                                break
 
 
 def SearchForLastG1Line(lines, lineIndex=-1):
@@ -296,17 +288,8 @@ def SwapContentAtZ(z, currentLines, swapLines, useRetraction=False):
                 CompensateEForLayerHeight(currentLayerDesc.LayerZ, swapTargetDesc, swapDataBlock)
 
                 #step 4. Get current E value
-                CurrentG1Line = SearchForLastG1Line(currentLines)
-                if CurrentG1Line:
-                        #make the E value of the swap content match the one of the current data
-                        if not ResetE(GetValue(CurrentG1Line, "E", -1), swapTargetDesc, swapDataBlock) and FirstG1EValue != -1:
-                                print 'SwapAtZ log: - Could not reset E in swapped content. Inserting G92 E value:', FirstG1EValue
-                                swapDataBlock.insert(FirstG1LineIndex, ('G92 E%0.5f' % FirstG1EValue))
-
-                elif FirstG1EValue != -1:
-                        print 'SwapAtZ log: - Could not reset E in swapped content. Inserting G92 E value:', FirstG1EValue
-                        swapDataBlock.insert(FirstG1LineIndex, ('G92 E%0.5f' % FirstG1EValue))
-
+                ResetE(swapTargetDesc, swapDataBlock)
+                
         #add the swap content
         currentLines.append(';SwapAtZ Start for requested Z%s\n' % z)
         currentLines += swapDataBlock
