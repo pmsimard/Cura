@@ -14,6 +14,7 @@ import stat
 import time
 import subprocess
 import threading
+import tempfile
 try:
 	from xml.etree import cElementTree as ElementTree
 except:
@@ -159,6 +160,52 @@ def ejectDrive(driveName):
 		return False
 	else:
 		return True
+
+
+#Added by Pierre-Marc Simard, pierrem.simard@gmail.com
+#Recursively move the content back and fort in temp folders in order to force the content to be sorted on the FAT.
+#If the script fail look for any remaining temp folders in the sub folders and look for moved files.
+#This way the content appear sorted when browsing on the UM2 LED screen.
+#This was tested on a Windows 7 pc.
+def sortContent(folder, recursive=True):
+        print "sorting content for", folder
+        content = os.listdir(folder)
+        tempdir = tempfile.mkdtemp(dir=folder)
+
+        try:
+                content.sort()
+                for f in content:
+                        realPath = os.path.join(folder, f)
+                        if os.path.isdir(realPath):
+                                tempPath = os.path.join(tempdir, f)
+                                try:
+                                        os.rename(realPath, tempPath)
+                                        os.rename(tempPath, realPath)
+                                except:
+                                        print "ERROR: Folder could not be sorted", realPath, tempPath
+            
+                for f in content:
+                        realPath = os.path.join(folder, f)
+                        if not os.path.isdir(realPath):
+                                tempPath = os.path.join(tempdir, f)
+                                try:
+                                        os.rename(realPath, tempPath)
+                                        os.rename(tempPath, realPath)
+                                except:
+                                        print "ERROR: File could not be sorted", realPath, tempPath
+                
+                if recursive:
+                        for f in content:
+                                realPath = os.path.join(folder, f)
+                                if os.path.isdir(realPath):
+                                        sortContent(realPath, recursive)
+
+        except:
+                import sys, traceback
+                traceback.print_exc()
+                print "ERROR: SortContent failed at", folder
+
+        os.rmdir(tempdir)
 
 if __name__ == '__main__':
 	print getPossibleSDcardDrives()

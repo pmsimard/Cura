@@ -253,7 +253,38 @@ class SceneView(openglGui.glGuiPanel):
 				else:
 					drive = drives[0]
 				filename = self._scene._objectList[0].getName() + profile.getGCodeExtension()
-				threading.Thread(target=self._saveGCode,args=(drive[1] + filename, drive[1])).start()
+				sortContent = profile.getPreference("sdcard_autosortcontent") == "True"
+				
+				#check if the file is part of the root folder. If so, create folders on sd card to get the same folder hierarchy.
+				repDir = profile.getPreference("sdcard_rootfolder")
+				if os.path.exists(repDir):
+				        repDir = os.path.abspath(repDir)
+				        originFilename = os.path.abspath( self._scene._objectList[0].getOriginFilename() )
+				        if os.path.dirname(originFilename).startswith(repDir):
+				                filename = os.path.splitext(originFilename[len(repDir):])[0] + profile.getGCodeExtension()
+				                sdPath = os.path.dirname(os.path.join( drive[1], filename))
+				                if not os.path.exists(sdPath):
+				                        #if the sdPath doesnt exist and sorting sd content is true
+				                        #we will find the existing parent folder and sort that one after creating the folders.
+				                        if sortContent:
+				                                prevDir = os.path.dirname(sdPath)
+				                                while not os.path.exists(prevDir):
+				                                        newDir = os.path.dirname(prevDir)
+				                                        if newDir == prevDir:
+				                                                break
+
+				                                        prevDir = newDir
+
+				                                if os.path.exists(prevDir):
+				                                        print "Creating replication directory:", sdPath
+				                                        os.makedirs(sdPath)
+				                                        removableStorage.sortContent(prevDir, False)
+
+				                        else:
+				                                print "Creating replication directory:", sdPath
+				                                os.makedirs(sdPath)
+
+				threading.Thread(target=self._saveGCode,args=(drive[1] + filename, drive[1], sortContent)).start()
 			elif connectionGroup is not None:
 				connections = connectionGroup.getAvailableConnections()
 				if len(connections) < 2:
@@ -314,7 +345,7 @@ class SceneView(openglGui.glGuiPanel):
 
 		threading.Thread(target=self._saveGCode,args=(filename,)).start()
 
-	def _saveGCode(self, targetFilename, ejectDrive = False):
+	def _saveGCode(self, targetFilename, ejectDrive = False, sortContent=False):
 		data = self._engine.getResult().getGCode()
 		try:
 			size = float(len(data))
@@ -332,6 +363,9 @@ class SceneView(openglGui.glGuiPanel):
 			traceback.print_exc()
 			self.notification.message("Failed to save")
 		else:
+			if sortContent:
+				removableStorage.sortContent(os.path.dirname(targetFilename), False)
+
 			if ejectDrive:
 				self.notification.message("Saved as %s" % (targetFilename), lambda : self._doEjectSD(ejectDrive), 31, 'Eject')
 			elif explorer.hasExplorer():

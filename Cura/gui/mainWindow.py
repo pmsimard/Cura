@@ -21,6 +21,7 @@ from Cura.gui.util import dropTarget
 from Cura.gui.tools import pidDebugger
 from Cura.gui.tools import minecraftImport
 from Cura.util import profile
+from Cura.util import removableStorage
 from Cura.util import version
 import platform
 from Cura.util import meshLoader
@@ -153,6 +154,11 @@ class mainWindow(wx.Frame):
 		self.machineMenu = wx.Menu()
 		self.updateMachineMenu()
 
+		self.machineMenu.AppendSeparator()
+		i = self.machineMenu.Append(-1, _("Sort SD card content now..."))
+		self.Bind(wx.EVT_MENU, self.OnSortSDContent, i)
+		
+		
 		self.menubar.Append(self.machineMenu, _("Machine"))
 
 		expertMenu = wx.Menu()
@@ -559,6 +565,21 @@ class mainWindow(wx.Frame):
 				wx.TheClipboard.Close()
 		except:
 			print "Could not write to clipboard, unable to get ownership. Another program is using the clipboard."
+
+	def OnSortSDContent(self, e):
+		drives = removableStorage.getPossibleSDcardDrives()
+		if drives:
+			if len(drives) > 1:
+				dlg = wx.SingleChoiceDialog(self, "Select SD drive", "Multiple removable drives have been found,\nplease select your SD card drive", map(lambda n: n[0], drives))
+				if dlg.ShowModal() != wx.ID_OK:
+					dlg.Destroy()
+					return
+				drive = drives[dlg.GetSelection()]
+				dlg.Destroy()
+			else:
+			        drive = drives[0]
+
+			removableStorage.sortContent(drive[1])
 
 	def OnCheckForUpdate(self, e):
 		newVersion = version.checkForNewerVersion()
