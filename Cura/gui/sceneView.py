@@ -64,6 +64,11 @@ class SceneView(openglGui.glGuiPanel):
 		self.openFileButton      = openglGui.glButton(self, 4, _("Load"), (0,0), self.showLoadModel)
 		self.printButton         = openglGui.glButton(self, 6, _("Print"), (1,0), self.OnPrintButton)
 		self.printButton.setDisabled(True)
+		
+		self.requireUpdateButton = openglGui.glButton(self, 23, _("Update"), (3,0), self.OnRequireUpdate)
+		self.requireUpdateButton.setHidden(True)
+		self._requestedUpdate = False
+		self._autoUpdate = True
 
 		group = []
 		self.rotateToolButton = openglGui.glRadioButton(self, 8, _("Rotate"), (0,-1), group, self.OnToolSelect)
@@ -309,6 +314,11 @@ class SceneView(openglGui.glGuiPanel):
 				self.Bind(wx.EVT_MENU, lambda e: self._openPrintWindowForConnection(e.GetEventObject().connectionMap[e.GetId()]), i)
 			self.Bind(wx.EVT_MENU, lambda e: self.showSaveGCode(), menu.Append(-1, _("Save GCode...")))
 			self.Bind(wx.EVT_MENU, lambda e: self._showEngineLog(), menu.Append(-1, _("Slice engine log...")))
+			if self._autoUpdate:
+				self.Bind(wx.EVT_MENU, lambda e: self._setAutoUpdate(), menu.Append(-1, _("Set Auto Update Off...")))
+			else:
+				self.Bind(wx.EVT_MENU, lambda e: self._setAutoUpdate(), menu.Append(-1, _("Set Auto Update On...")))
+				
 			self.PopupMenu(menu)
 			menu.Destroy()
 
@@ -575,11 +585,25 @@ class SceneView(openglGui.glGuiPanel):
 		self._scene.merge(self._selectedObj, self._focusObj)
 		self.sceneUpdated()
 
+	def _setAutoUpdate(self):
+		self._autoUpdate = not self._autoUpdate
+		self.sceneUpdated()
+
+	def OnRequireUpdate(self, button):
+		self._requestedUpdate = True
+		self.sceneUpdated()
+
 	def sceneUpdated(self):
-		self._sceneUpdateTimer.Start(500, True)
-		self._engine.abortEngine()
-		self._scene.updateSizeOffsets()
-		self.QueueRefresh()
+		if self._autoUpdate or self._requestedUpdate:
+			self._sceneUpdateTimer.Start(500, True)
+			self._engine.abortEngine()
+			self._scene.updateSizeOffsets()
+			self.QueueRefresh()
+			self._requestedUpdate = False
+			self.requireUpdateButton.setHidden(True)
+		
+		elif not self._autoUpdate:
+			self.requireUpdateButton.setHidden(False)
 
 	def _onRunEngine(self, e):
 		if self._isSimpleMode:
