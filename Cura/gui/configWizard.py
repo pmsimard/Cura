@@ -446,6 +446,7 @@ class MachineSelectPage(InfoPage):
 			profile.putMachineSetting('machine_type', 'ultimaker2')
 			profile.putMachineSetting('machine_center_is_zero', 'False')
 			profile.putMachineSetting('has_heated_bed', 'True')
+			profile.putMachineSetting('ultimaker_glass_locks', 'True')
 			profile.putMachineSetting('gcode_flavor', 'UltiGCode')
 			profile.putMachineSetting('extruder_head_size_min_x', '40.0')
 			profile.putMachineSetting('extruder_head_size_min_y', '10.0')
@@ -485,6 +486,7 @@ class MachineSelectPage(InfoPage):
 			profile.putMachineSetting('extruder_head_size_max_y', '35.0')
 			profile.putMachineSetting('extruder_head_size_height', '55.0')
 			profile.putMachineSetting('has_heated_bed', 'True')
+			profile.putMachineSetting('ultimaker_glass_locks', 'True')
 			profile.putMachineSetting('extruder_amount', '1')
 			profile.putProfileSetting('retraction_enable', 'True')
 		elif self.LulzbotTazRadio.GetValue() or self.LulzbotMiniRadio.GetValue():

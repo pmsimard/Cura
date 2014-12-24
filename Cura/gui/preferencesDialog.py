@@ -90,6 +90,7 @@ class machineSettingsDialog(wx.Dialog):
 			configBase.SettingRow(left, 'machine_height', index=idx)
 			configBase.SettingRow(left, 'extruder_amount', index=idx)
 			configBase.SettingRow(left, 'has_heated_bed', index=idx)
+			configBase.SettingRow(left, 'ultimaker_glass_locks', index=idx)
 			configBase.SettingRow(left, 'machine_center_is_zero', index=idx)
 			configBase.SettingRow(left, 'machine_shape', index=idx)
 			configBase.SettingRow(left, 'gcode_flavor', index=idx)
