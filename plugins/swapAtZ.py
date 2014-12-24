@@ -1,4 +1,4 @@
-#Name: Swap at height
+#Name: Swap at height 1.0
 #Info: Swap GCode at a certain height
 #Depend: GCode
 #Type: postprocess
@@ -10,6 +10,9 @@
 ##09/09/2014: Started by Pierre-Marc Simard, pierrem.simard@gmail.com
 ##09/25/2014: Dirkels: Adding better support for height change. Fixing swap height to locate best matching layer
 ##09/27/2014: PM: Replaced process of offsetting E value at large in the gcode and added G92 codes instead. This prevent potential max float issues and simplify code. Proposed by GR5
+##12/24/2014: PM: Add version number.
+
+##Cura Version: 14.07
 
 import os, sys, math, re
 
