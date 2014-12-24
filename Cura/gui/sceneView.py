@@ -106,7 +106,7 @@ class SceneView(openglGui.glGuiPanel):
 		openglGui.glLabel(self.scaleForm, _("Uniform scale"), (0,8))
 		self.scaleUniform = openglGui.glCheckbox(self.scaleForm, True, (1,8), None)
 
-		self.viewSelection = openglGui.glComboButton(self, _("View mode"), [7,19,11,15,23], [_("Normal"), _("Overhang"), _("Transparent"), _("X-Ray"), _("Layers")], (-1,0), self.OnViewChange)
+		self.viewSelection = openglGui.glComboButton(self, _("View mode"), [7,19,11,15,23, 23], [_("Normal"), _("Overhang"), _("Transparent"), _("X-Ray"), _("Layers"), _("Single Layer")], (-1,0), self.OnViewChange)
 
 		self.youMagineButton = openglGui.glButton(self, 26, _("Share on YouMagine"), (2,0), lambda button: youmagineGui.youmagineManager(self.GetTopLevelParent(), self._scene))
 		self.youMagineButton.setDisabled(True)
@@ -430,7 +430,7 @@ class SceneView(openglGui.glGuiPanel):
 			self.OnToolSelect(0)
 
 	def OnViewChange(self):
-		if self.viewSelection.getValue() == 4:
+		if self.viewSelection.getValue() == 4 or self.viewSelection.getValue() == 5:
 			self.viewMode = 'gcode'
 			self.tool = previewTools.toolNone(self)
 		elif self.viewSelection.getValue() == 1:
@@ -441,7 +441,7 @@ class SceneView(openglGui.glGuiPanel):
 			self.viewMode = 'xray'
 		else:
 			self.viewMode = 'normal'
-		self._engineResultView.setEnabled(self.viewMode == 'gcode')
+		self._engineResultView.setEnabled(self.viewMode == 'gcode', self.viewSelection.getValue() == 5)
 		self.QueueRefresh()
 
 	def OnRotateReset(self, button):
