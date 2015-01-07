@@ -27,6 +27,8 @@ class engineResultView(object):
 
 		self.layerSelect = openglGui.glSlider(self._parent, 10000, 0, 1, (-1,-2), lambda : self._parent.QueueRefresh())
 		self.singleLayerToggle = openglGui.glButton(self._parent, 23, _("Single Layer"), (-1,-1.5), self.OnSingleLayerToggle, 0.5) #stay half size of the base size
+		self.layerProgress = openglGui.glSlider(self._parent, 10000, 0, 1, (-2,-2), lambda : self._parent.QueueRefresh())
+
 
 	def setResult(self, result):
 		if self._result == result:
@@ -52,14 +54,18 @@ class engineResultView(object):
 		self._singleLayer = not self._singleLayer
 		if self._singleLayer:
 			self.singleLayerToggle._tooltip = "Multi Layer"
+			self.layerProgress.setHidden(False)
 		else:
 			self.singleLayerToggle._tooltip = "Single Layer"
+			self.layerProgress.setHidden(True)
 
 	def setEnabled(self, enabled):
 		self._enabled = enabled
 		self._singleLayer = False
 		self.layerSelect.setHidden(not enabled)
 		self.singleLayerToggle.setHidden(not enabled)
+		self.layerProgress.setHidden(True)
+
 		
 
 	def _gcodeLoadCallback(self, result, progress):
@@ -148,6 +154,20 @@ class engineResultView(object):
 						self._layerVBOs.append({})
 					layerVBOs = self._layerVBOs[n]
 					if gcodeLayers is not None and ((layerNr - 10 < n < (len(gcodeLayers) - 1)) or len(result._polygons) < 1):
+						layerStep = -1
+						if self._singleLayer and n == layerNr - 1:
+							stepCount = 0
+							for typeNamePolygons, typeName, color in lineTypeList:
+								if typeName is None:
+									continue
+								if 'GCODE-' + typeName not in layerVBOs:
+									layerVBOs['GCODE-' + typeName] = self._gcodeToVBO_quads(gcodeLayers[n+1:n+2], typeName)
+
+								stepCount += layerVBOs['GCODE-' + typeName].getSize() / 4
+
+							self.layerProgress.setRange(0, stepCount)
+							layerStep = self.layerProgress.getValue()
+
 						for typeNamePolygons, typeName, color in lineTypeList:
 							if typeName is None:
 								continue
@@ -156,7 +176,7 @@ class engineResultView(object):
 
 							if not self._singleLayer or n == layerNr - 1:
 								glColor4f(color[0]*c,color[1]*c,color[2]*c,color[3])
-								layerVBOs['GCODE-' + typeName].render()
+								layerStep = layerVBOs['GCODE-' + typeName].render(layerStep)
 
 						if n == layerNr - 1:
 							if 'GCODE-MOVE' not in layerVBOs:

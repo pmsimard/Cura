@@ -176,7 +176,10 @@ class GLVBO(GLReferenceCounter):
 				glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self._bufferIndices)
 				glBufferData(GL_ELEMENT_ARRAY_BUFFER, numpy.array(indicesArray, numpy.uint32), GL_STATIC_DRAW)
 
-	def render(self):
+	def render(self, maxSteps = -1):
+		if maxSteps == 0:
+			return maxSteps
+
 		glEnableClientState(GL_VERTEX_ARRAY)
 		if self._buffers is None:
 			glVertexPointer(3, GL_FLOAT, 0, self._vertexArray)
@@ -203,7 +206,14 @@ class GLVBO(GLReferenceCounter):
 					glVertexPointer(3, GL_FLOAT, 3*4, c_void_p(0))
 				if self._hasIndices:
 					glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self._bufferIndices)
-					glDrawElements(self._renderType, self._size, GL_UNSIGNED_INT, c_void_p(0))
+					drawSize = self._size
+					if maxSteps != -1:
+						if drawSize / 4 > maxSteps:
+							drawSize = maxSteps * 4
+					
+						maxSteps -= drawSize / 4
+
+					glDrawElements(self._renderType, drawSize, GL_UNSIGNED_INT, c_void_p(0))
 				else:
 					glDrawArrays(self._renderType, 0, info['size'])
 
@@ -214,6 +224,8 @@ class GLVBO(GLReferenceCounter):
 		glDisableClientState(GL_VERTEX_ARRAY)
 		if self._hasNormals:
 			glDisableClientState(GL_NORMAL_ARRAY)
+
+		return maxSteps
 
 	def release(self):
 		if self._buffers is not None:
@@ -230,6 +242,9 @@ class GLVBO(GLReferenceCounter):
 				glDeleteBuffers(1, [self._bufferIndices])
 		self._vertexArray = None
 		self._normalArray = None
+
+	def getSize(self):
+		return self._size
 
 	def __del__(self):
 		if self._buffers is not None and bool(glDeleteBuffers):
